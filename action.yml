@@ -1,0 +1,64 @@
+name: 'Setup .NET Tools'
+description: 'Install or restore .NET tools with optional caching'
+
+inputs:
+  tools:
+    description: 'One or more .NET tools to install globally, one per line. When omitted, dotnet tool restore is used instead.'
+    required: false
+    default: ''
+  cache:
+    description: 'Cache installed tools'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Cache NuGet packages (restore)
+      if: inputs.tools == '' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: dotnet-tools-restore-${{ runner.os }}-${{ hashFiles('**/.config/dotnet-tools.json', '**/dotnet-tools.json') }}
+        restore-keys: |
+          dotnet-tools-restore-${{ runner.os }}-
+
+    - name: Restore dotnet tools
+      if: inputs.tools == ''
+      shell: pwsh
+      run: dotnet tool restore
+
+    - name: Hash tools input
+      id: tools-hash
+      if: inputs.tools != '' && inputs.cache == 'true'
+      env:
+        DOTNET_TOOLS: ${{ inputs.tools }}
+      shell: pwsh
+      run: |
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($env:DOTNET_TOOLS)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+          $hash = $sha256.ComputeHash($bytes)
+          $hashString = ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
+          "value=$hashString" >> $env:GITHUB_OUTPUT
+        } finally {
+          $sha256.Dispose()
+        }
+
+    - name: Cache global .NET tools
+      id: cache-global
+      if: inputs.tools != '' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.dotnet/tools
+        key: dotnet-tools-${{ runner.os }}-${{ steps.tools-hash.outputs.value }}
+
+    - name: Install dotnet tools
+      if: inputs.tools != '' && (inputs.cache != 'true' || steps.cache-global.outputs.cache-hit != 'true')
+      env:
+        DOTNET_TOOLS: ${{ inputs.tools }}
+      shell: pwsh
+      run: |
+        $env:DOTNET_TOOLS -split "`n" | Where-Object { $_.Trim() -ne '' } | ForEach-Object {
+          dotnet tool install -g "$($_.Trim())"
+        }

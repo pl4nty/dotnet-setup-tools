@@ -1,0 +1,72 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-restore:
+    name: Test dotnet tool restore (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - uses: ./
+
+      - name: Verify restored tool is runnable
+        shell: pwsh
+        run: dotnet tool run minver
+
+  test-install:
+    name: Test dotnet tool install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - uses: ./
+        with:
+          tools: dotnet-ef
+
+      - name: Verify installed tool is runnable
+        shell: pwsh
+        run: dotnet ef --version
+
+  test-install-no-cache:
+    name: Test dotnet tool install (no cache)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - uses: ./
+        with:
+          tools: dotnet-ef
+          cache: 'false'
+
+      - name: Verify installed tool is runnable
+        shell: pwsh
+        run: dotnet ef --version
