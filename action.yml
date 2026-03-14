@@ -1,0 +1,77 @@
+name: 'Setup .NET Tools'
+description: 'Install or restore .NET tools with optional caching'
+
+inputs:
+  tools:
+    description: 'One or more .NET tools to install globally, one per line. When omitted, dotnet tool restore is used instead.'
+    required: false
+    default: ''
+  cache:
+    description: 'Cache installed tools'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # ── Tool Restore (no tools provided) ──────────────────────────────────────
+
+    - name: Hash dotnet tool manifest files
+      id: manifest-hash
+      if: inputs.tools == '' && inputs.cache == 'true'
+      shell: bash
+      run: |
+        # maxdepth 5 covers root, .config/, src/<project>/.config/, etc.
+        files=$(find . -maxdepth 5 -name 'dotnet-tools.json' 2>/dev/null | sort)
+        if [ -n "$files" ]; then
+          # Hash file contents only so that renames don't invalidate the cache.
+          hash=$(echo "$files" | xargs cat | sha256sum | awk '{print $1}')
+        else
+          hash="no-manifest"
+        fi
+        echo "value=$hash" >> "$GITHUB_OUTPUT"
+
+    - name: Cache NuGet packages (restore)
+      if: inputs.tools == '' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: dotnet-tools-restore-${{ runner.os }}-${{ steps.manifest-hash.outputs.value }}
+        restore-keys: |
+          dotnet-tools-restore-${{ runner.os }}-
+
+    - name: Restore dotnet tools
+      if: inputs.tools == ''
+      shell: bash
+      run: dotnet tool restore
+
+    # ── Tool Install (tools provided) ─────────────────────────────────────────
+
+    - name: Hash tools input
+      id: tools-hash
+      if: inputs.tools != '' && inputs.cache == 'true'
+      env:
+        DOTNET_TOOLS: ${{ inputs.tools }}
+      shell: bash
+      run: |
+        hash=$(echo "$DOTNET_TOOLS" | sha256sum | awk '{print $1}')
+        echo "value=$hash" >> "$GITHUB_OUTPUT"
+
+    - name: Cache global .NET tools
+      id: cache-global
+      if: inputs.tools != '' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.dotnet/tools
+        key: dotnet-tools-${{ runner.os }}-${{ steps.tools-hash.outputs.value }}
+
+    - name: Install dotnet tools
+      if: inputs.tools != '' && (inputs.cache != 'true' || steps.cache-global.outputs.cache-hit != 'true')
+      env:
+        DOTNET_TOOLS: ${{ inputs.tools }}
+      shell: bash
+      run: |
+        # GitHub Actions bash runs with -eo pipefail, so any failed install exits immediately.
+        echo "$DOTNET_TOOLS" | grep -v '^[[:space:]]*$' | while IFS= read -r tool; do
+          dotnet tool install -g "$tool"
+        done
