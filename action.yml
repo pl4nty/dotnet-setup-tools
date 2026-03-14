@@ -14,48 +14,36 @@ inputs:
 runs:
   using: composite
   steps:
-    # ── Tool Restore (no tools provided) ──────────────────────────────────────
-
-    - name: Hash dotnet tool manifest files
-      id: manifest-hash
-      if: inputs.tools == '' && inputs.cache == 'true'
-      shell: bash
-      run: |
-        # maxdepth 5 covers root, .config/, src/<project>/.config/, etc.
-        files=$(find . -maxdepth 5 -name 'dotnet-tools.json' 2>/dev/null | sort)
-        if [ -n "$files" ]; then
-          # Hash file contents only so that renames don't invalidate the cache.
-          hash=$(echo "$files" | xargs cat | sha256sum | awk '{print $1}')
-        else
-          hash="no-manifest"
-        fi
-        echo "value=$hash" >> "$GITHUB_OUTPUT"
-
     - name: Cache NuGet packages (restore)
       if: inputs.tools == '' && inputs.cache == 'true'
       uses: actions/cache@v4
       with:
         path: ~/.nuget/packages
-        key: dotnet-tools-restore-${{ runner.os }}-${{ steps.manifest-hash.outputs.value }}
+        key: dotnet-tools-restore-${{ runner.os }}-${{ hashFiles('**/.config/dotnet-tools.json', '**/dotnet-tools.json') }}
         restore-keys: |
           dotnet-tools-restore-${{ runner.os }}-
 
     - name: Restore dotnet tools
       if: inputs.tools == ''
-      shell: bash
+      shell: pwsh
       run: dotnet tool restore
-
-    # ── Tool Install (tools provided) ─────────────────────────────────────────
 
     - name: Hash tools input
       id: tools-hash
       if: inputs.tools != '' && inputs.cache == 'true'
       env:
         DOTNET_TOOLS: ${{ inputs.tools }}
-      shell: bash
+      shell: pwsh
       run: |
-        hash=$(echo "$DOTNET_TOOLS" | sha256sum | awk '{print $1}')
-        echo "value=$hash" >> "$GITHUB_OUTPUT"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($env:DOTNET_TOOLS)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+          $hash = $sha256.ComputeHash($bytes)
+          $hashString = ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
+          "value=$hashString" >> $env:GITHUB_OUTPUT
+        } finally {
+          $sha256.Dispose()
+        }
 
     - name: Cache global .NET tools
       id: cache-global
@@ -69,9 +57,8 @@ runs:
       if: inputs.tools != '' && (inputs.cache != 'true' || steps.cache-global.outputs.cache-hit != 'true')
       env:
         DOTNET_TOOLS: ${{ inputs.tools }}
-      shell: bash
+      shell: pwsh
       run: |
-        # GitHub Actions bash runs with -eo pipefail, so any failed install exits immediately.
-        echo "$DOTNET_TOOLS" | grep -v '^[[:space:]]*$' | while IFS= read -r tool; do
-          dotnet tool install -g "$tool"
-        done
+        $env:DOTNET_TOOLS -split "`n" | Where-Object { $_.Trim() -ne '' } | ForEach-Object {
+          dotnet tool install -g "$($_.Trim())"
+        }
