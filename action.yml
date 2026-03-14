@@ -1,5 +1,9 @@
 name: 'Setup .NET Tools'
 description: 'Install or restore .NET tools with optional caching'
+author: pl4nty
+branding:
+  color: purple
+  icon: play
 
 inputs:
   tools:
